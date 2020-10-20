@@ -1,0 +1,306 @@
+---
+title: "Report of Berry Project"
+author: "Haoqi Wang"
+date: "10/20/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+library(knitr)
+library(tidyverse)
+library(magrittr)
+library(kableExtra)
+library(ggplot2)
+library(citation)
+
+opts_chunk$set(echo = FALSE, 
+               warning = FALSE,
+               message = FALSE)
+```
+## 1.Overview
+
+In this assignment, I use the data that were collected from the USDA data base, and I choose strawberry as my data set to do the data cleaning, data organization, exploratory data analysis. Finally, I find some correlations between variables. 
+
+## 2.Acquire and read the data
+
+These data were collected from the USDA database selector: <a href="https://quickstats.nass.usda.gov">https://quickstats.nass.usda.gov</a>"
+
+The data were <a href="https://quickstats.nass.usda.gov/results/D416E96E-3D5C-324C-9334-1D38DF88FFF1">stored online</a> and then downloaded as a CSV file.
+
+
+```{r}
+
+## read the data
+
+ag_data <- read.csv("berries.csv")
+
+## look at number of unique values in each column
+ag_data %>% summarize_all(n_distinct) -> aa
+
+## make a list of the columns with only one unique value
+bb <- which(aa[1,]==1)
+
+## list the 1-unique value column names 
+cn <- colnames(ag_data)[bb]
+
+```
+
+
+## 3. Choose Strawberries-Data clean and Data organize 
+
+Data selected from the NASS database often has columns without any data or with a single repeated Values.  The berries data had only 8 out of 21 columns containing meaningful data.
+
+This table contains informaton about berries: blueberries, raspberries, and strawberries.
+
+When the data have been cleaned and organized, the three kinds of berries will be separted into tables with the same stucture so that they can be compared.  So, working with Strawberries along demonstrates how the data will be cleaned and organized.
+```{r}
+## remove the 1-unique columns from the dataset
+ag_data %<>% select(-all_of(bb))
+
+aa %<>% select(-all_of(bb)) 
+
+
+## State name and the State ANSI code are (sort of) redundant
+## Just keep the name
+ag_data %<>% select(-4)
+aa %<>% select(-4) 
+kable(head(ag_data)) %>%kable_styling(font_size=12)
+
+#clean the column of Data.Item
+sberry <- ag_data %>% filter((Commodity=="STRAWBERRIES") & (Period=="YEAR"))
+sberry %<>% select(-c(Period, Commodity))   
+    
+# Does every Data Item begin with "
+sum(str_detect(sberry$`Data.Item`, "^STRAWBERRIES,")) == length(sberry$`Data.Item`)
+
+#Revise the rows in 'Data.Item' 
+for(i in 1:length(sberry$Year)){
+      sberry$`Data.Item`[i]<-str_replace(sberry$`Data.Item`[i],"STRAWBERRIES - ","STRAWBERRIES, TAME  ")
+}
+# Does every Data Item begin with "
+sum(str_detect(sberry$`Data.Item`, "^STRAWBERRIES,")) == length(sberry$`Data.Item`)
+
+
+# separate the items in Data.Item
+sberry %<>% separate(`Data.Item`, c("S","Type", "meas", "what"), sep = ",") 
+sberry %<>% select(-S)
+ty <- str_split(sberry$Type, " ", simplify=TRUE)
+sberry %<>% separate(Type,c("s1", "Type", "s2", "lab1", "lab2"), " ")
+
+sberry %<>% select(-c(s1,s2)) 
+sberry[is.na(sberry)] <- " "  
+
+## clean the column of Domain
+
+sberry %<>% separate(Domain, c("D_left", "D_right"), sep = ", ")
+
+sberry[is.na(sberry)] <- " "
+
+## clean the column of Domain Category
+#Revise the rows in 'Data.Item' 
+for(i in 1:length(sberry$Year)){
+      sberry$`Domain.Category`[i]<-str_replace(sberry$`Domain.Category`[i],"NOT SPECIFIED","NOT SPECIFIED, ")
+}
+sberry %<>% separate(`Domain.Category`, c("DC_left", "DC_right"), sep = ", ")
+
+## work on DC_left first
+
+sberry %<>% separate(DC_left, c("DC_left_l", "DC_left_r"), sep = ": ")
+
+## now work on DC_right
+
+sberry %<>% separate(DC_right, c("DC_right_l", "DC_right_r"), sep = ": ") 
+## remove NA
+sberry[is.na(sberry)] <- " "
+
+## remove column DC_left_l
+
+sberry %<>%  select(-DC_left_l) 
+
+## remove column DC_right_l
+
+sberry %<>% select(-DC_right_l)
+
+##check the lab1 lab2
+sberry %<>% mutate(label = paste(lab1,lab2)) 
+
+## test for necisity of "chemical" in col D_left
+
+paste(sberry$D_left, sberry$D_right) %>% unique()
+# [1] "TOTAL  "              "CHEMICAL FUNGICIDE"   "CHEMICAL HERBICIDE"   "CHEMICAL INSECTICIDE"
+# [5] "CHEMICAL OTHER"       "FERTILIZER  "   
+
+
+## remove "Chemical" and joint the columns
+
+sberry %<>% mutate(D_left = "CHEMICAL", D_left = "") 
+sberry %<>% mutate(Chemical=paste(D_left, D_right)) 
+sberry %<>% select(-c(D_left, D_right)) 
+sberry %<>% select(Year, State, Type, what, meas, label, DC_left_r, DC_right_r, Chemical, Value )
+
+###  Now the problem is that we have entries in both the "what" and "meas" columns
+##  that begin  "MEASURED IN"
+f1 <- function(a,b){
+  if(a){
+    return(b)
+  }else{
+      return("")
+  }
+}
+index_meas <- str_detect(sberry$meas, "MEASURED IN")
+sberry %<>% mutate(m_in_1 = unlist(map2(index_meas, sberry$meas, f1))) 
+sberry %<>% mutate(meas = str_replace(sberry$meas, "MEASURED IN.*$", ""))
+
+index_what <- str_detect(sberry$what, "MEASURED IN")
+sberry %<>% mutate(m_in_2 = unlist(map2(index_what, sberry$what, f1))) 
+sberry %<>% mutate(what = str_replace(sberry$what, "MEASURED IN.*$", ""))
+
+
+### Check for overlaps
+
+sberry %<>% mutate(units = str_trim(paste(m_in_1, m_in_2))) 
+
+sberry$units %>% unique()
+
+
+## now let's clean it up 
+
+sberry %<>% rename(Avg = what) 
+sberry %<>% rename(Marketing = meas, Harvest = label, Chem_family = DC_left_r, Materials = DC_right_r, Measures = units)
+
+colnames(sberry)
+
+sberry %<>% select(Year, State, Type, Marketing, 
+                   Measures, Avg, Harvest, Chem_family,
+                   Materials, Chemical, Value )
+
+
+###  these belong in one column
+
+sberry %<>% mutate(Production = str_trim(paste(Marketing, Harvest)))
+
+sberry %<>% select(Year, State, Type, Production, Measures,
+                   Avg, Chem_family, Materials, Chemical, Value)
+
+
+## I missed this one !!
+
+sberry %<>% mutate(Chemical = str_trim(paste(Chem_family, Chemical)))
+
+sberry %<>% select(Year, State, Type, Production, Avg, Measures, Materials, Chemical, Value)
+
+### let's look at chemicals being applied to food
+
+unfood <- sberry %<>% filter(Production=="APPLICATIONS") 
+
+
+unfood %<>% filter(Value != "(D)")
+
+unfood %<>% filter(Value !=  "(NA)")
+
+unfood %<>% filter(Measures == "MEASURED IN LB / ACRE / APPLICATION")
+
+unfood$type %>% unique()                  ## BEARING
+unfood$production %>% unique()            ## APPLICATIONS
+unfood$Avg %>% unique()                   ## AVG
+unfood$Measures %>% unique()              ## MEASURED IN LB / ACRE / APPLICATION
+unfood$Materials %>% unique()      ## long list!!        
+unfood$Chemical %>% unique()
+
+
+unfood_1 <- unfood %>%  select(Year, State, Chemical, Value)
+
+unfood_1 %<>% pivot_wider(names_from = Chemical, values_from = Value)
+
+a <- unfood_1$FUNGICIDE
+
+
+kable(head(sberry, n=10)) %>% kable_styling(font_size=12)
+
+```
+
+## 4.Exploratory data analysis
+```{r}
+#remove the unuseful value
+sberry$Chemical <- ifelse(sberry$Chemical=="", NA, sberry$Chemical)
+sberry[is.na(sberry)] <- ""
+sberry$Value <- ifelse(sberry$Value==" (D)", NA, sberry$Value)
+sberry[is.na(sberry)] <- ""
+sberry$Value <- ifelse(sberry$Value==" (NA)", NA, sberry$Value)
+sberry[is.na(sberry)] <- ""
+sberry$Value <- ifelse(sberry$Value==" (Z)", NA, sberry$Value)
+sberry[is.na(sberry)] <- ""
+```
+
+## (1)chemical and value
+```{r}
+#Firstly, I am interested in finding the relationship between the chemical type and value
+sberry1<-sberry%>%select(Year,State,Production,Chemical,Value)
+sberry1$Value %<>% as.numeric() 
+
+#draw the boxplot to see the distribution of value by using different type of chemical
+ggplot(sberry1) +
+  geom_boxplot(mapping = aes(x = Chemical, y = Value)) +
+  theme(axis.title = element_text(size = 12, face = "bold")) +
+  labs(x = "Chemical Type")
+```
+```{r}
+#The plot shows that the range of different chemical is big, and every chemical type has extreme different value here. And also there are many outliers that make the plot not useful, so according to the plot above, I make some adjustment and create another plot.
+sberry2 <- filter(sberry1,Chemical=="(NITROGEN)"|Chemical=="(PHOSPHATE)"|Chemical=="(POTASH)")
+ggplot(sberry2) +
+  geom_boxplot(mapping = aes(x = Chemical, y = Value)) +
+  coord_cartesian( ylim=c(0,50))+
+  theme(axis.title = element_text(size = 12, face = "bold")) +
+  labs(x = "Chemical Type")
+
+sberry3 <- filter(sberry1,Chemical=="FUNGICIDE"|Chemical=="HERBICIDE"|Chemical=="INSECTICIDE")
+ggplot(sberry3) +
+  geom_boxplot(mapping = aes(x = Chemical, y = Value)) +
+  coord_cartesian( ylim=c(0,15))+
+  theme(axis.title = element_text(size = 12, face = "bold")) +
+  labs(x = "Chemical Type")
+#So, we can see the plot above, the number of outliers are huge. When I delete them, I can say that the values of nitrogen and potash are bigger than other types generally. 
+```
+## (2)State and value
+```{r}
+# Secondly, I want to confirm that whether price of production was affects by State or not.
+ggplot(sberry1)+ 
+  geom_boxplot(aes(x=State,y=Value,fill=State))+ 
+  coord_cartesian( ylim=c(0,30))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  facet_wrap(.~Year,scales = "free")
+#The data of Oregon is small and the value is high, so when I delete the outliers, the value of oregon is missing. We can see that the mean value of Florida is always higher that California in recent two years. The range of the value is very big in Washington.
+```
+
+## (3)Year and value
+```{r}
+#Thirdly,I want to confirm that whether price of production was affects by year or not.
+ggplot(sberry1)+ 
+  geom_boxplot(aes(x=Year,y=Value,group=Year,fill=Year))+ 
+  coord_cartesian( ylim=c(0,10))
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# The mean value of every year is almost same.
+```
+
+## 5.Conclusion
+
+According the dataset and EDA distribution, I can conclude that the correlations of chemical type, state and years are different. But the simple boxplot does not show more right now. I may need to more time to research deeper. 
+
+During this time, I learned how to clean data, and how to organize data. When I did EDA part, I really want to use pca to predict , but there are some errors that need me to fix later. I will review the class recording to fix them.
+
+## 6.Reference
+```{r}
+citation("ggplot2")
+citation("knitr")
+citation("magrittr")
+citation("kableExtra")
+citation("citation")
+```
+Class recording 14-18, MA615
+
+https://shiny.rstudio.com/tutorial/
+
+
+
